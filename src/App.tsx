@@ -134,17 +134,17 @@ export default function TubeJointVisualizer() {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const controlsRef = useRef<CameraControls | null>(null);
-
-
   
   const raycasterRef = useRef(new THREE.Raycaster());
   const mouseRef = useRef(new THREE.Vector2());
   const tubesRef = useRef<Tube[]>([]);
+  const draggedTubeRef = useRef<string | null>(null);
 
   const [tubes, setTubes] = useState<Tube[]>([]);
   const [selectedTube, setSelectedTube] = useState<string | null>(null);
   const [showWireframe, setShowWireframe] = useState(true);
   const [showSolid, setShowSolid] = useState(true);
+  const [draggedTube, setDraggedTube] = useState<string | null>(null); 
   
   // Tube parameters
   const [tubeType, setTubeType] = useState('rectangular');
@@ -154,53 +154,41 @@ export default function TubeJointVisualizer() {
   const [length, setLength] = useState(100);
   const [angle, setAngle] = useState(90);
 
+  // Main Scene Setup
   useEffect(() => {
     if (!mountRef.current) return;
+    
+    // Cleanup
     while (mountRef.current.firstChild) {
       mountRef.current.removeChild(mountRef.current.firstChild);
     }
 
-    // Scene setup
+    // Scene, Camera, Renderer setup...
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xf0f0f0);
     sceneRef.current = scene;
     
-    // Camera setup
-    const camera = new THREE.PerspectiveCamera(
-      75,
-      mountRef.current.clientWidth / mountRef.current.clientHeight,
-      0.1,
-      2000
-    );
+    const camera = new THREE.PerspectiveCamera(75, mountRef.current.clientWidth / mountRef.current.clientHeight, 0.1, 2000);
     camera.position.set(200, 200, 200);
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
     
-    // Renderer setup
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight);
     renderer.shadowMap.enabled = true;
     mountRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
     
-    // Lighting
+    // Lights & Helpers...
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLight);
-    
     const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
     directionalLight.position.set(100, 100, 50);
-    directionalLight.castShadow = true;
     scene.add(directionalLight);
+    scene.add(new THREE.GridHelper(500, 50, 0x888888, 0xcccccc));
+    scene.add(new THREE.AxesHelper(100));
     
-    // Grid helper
-    const gridHelper = new THREE.GridHelper(500, 50, 0x888888, 0xcccccc);
-    scene.add(gridHelper);
-    
-    // Axes helper
-    const axesHelper = new THREE.AxesHelper(100);
-    scene.add(axesHelper);
-    
-    // Basic orbit controls
+    // Controls setup
     const controls: CameraControls = {
       isDragging: false,
       previousMousePosition: { x: 0, y: 0 },
@@ -209,40 +197,87 @@ export default function TubeJointVisualizer() {
     };
     controlsRef.current = controls;
 
+    // --- MOUSE EVENTS START ---
+
     const onMouseDown = (e: MouseEvent) => {
       if (!cameraRef.current || !rendererRef.current) return;
-  
-  // Calculate mouse position in normalized device coordinates
-  const rect = rendererRef.current.domElement.getBoundingClientRect();
-  mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-  mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-  
-  // Check for tube selection on left click
-  if (e.button === 0 && !e.shiftKey) {
-    raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
-    const meshes = tubesRef.current
-    .map(t => t.mesh)
-    .filter((m): m is THREE.Mesh => m !== null);
+      
+      const rect = rendererRef.current.domElement.getBoundingClientRect();
+      mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      
+      // Left Click: Select or Start Drag
+      if (e.button === 0 && !e.shiftKey) {
+        raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+        
+        // Use Ref for latest tubes
+        const meshes = tubesRef.current
+          .map(t => t.mesh)
+          .filter((m): m is THREE.Mesh => m !== null);
 
-    const intersects = raycasterRef.current.intersectObjects(meshes);
-    
-    if (intersects.length > 0) {
-      const tubeId = intersects[0].object.userData.tubeId as string;
-      setSelectedTube(tubeId);
-    } else {
-      setSelectedTube(null);
-    }
-  }
-  
-  // Camera rotation
-  if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
-    controls.isDragging = true;
-    controls.previousMousePosition = { x: e.clientX, y: e.clientY };
-  }
-};
+        const intersects = raycasterRef.current.intersectObjects(meshes);
+        
+        if (intersects.length > 0) {
+          const tubeId = intersects[0].object.userData.tubeId as string;
+          setSelectedTube(tubeId);
+          
+          // START DRAG
+          draggedTubeRef.current = tubeId;
+          setDraggedTube(tubeId); // Update UI state
+          controls.isDragging = false; // Ensure we don't rotate camera while dragging object
+        } else {
+          setSelectedTube(null);
+        }
+      }
+      
+      // Middle Click or Shift+Click: Rotate Camera
+      if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
+        controls.isDragging = true;
+        controls.previousMousePosition = { x: e.clientX, y: e.clientY };
+      }
+    };
     
     const onMouseMove = (e: MouseEvent) => {
-      if (controls.isDragging && cameraRef.current) {
+      if (!cameraRef.current || !rendererRef.current) return;
+
+      // 1. HANDLE OBJECT DRAGGING
+      if (draggedTubeRef.current) {
+        const rect = rendererRef.current.domElement.getBoundingClientRect();
+        mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+        raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+        
+        // Create an imaginary floor plane at height 0 to drag along
+        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+        const intersection = new THREE.Vector3();
+        raycasterRef.current.ray.intersectPlane(plane, intersection);
+
+        if (intersection) {
+          // Update State (React) AND Ref (Three.js)
+          setTubes(prevTubes => {
+             const newTubes = prevTubes.map(tube => {
+              if (tube.id === draggedTubeRef.current) {
+                // Update logic position
+                tube.position.copy(intersection);
+                
+                // Update visual meshes immediately
+                if (tube.mesh) tube.mesh.position.copy(intersection);
+                if (tube.wireframe) tube.wireframe.position.copy(intersection);
+                if (tube.highlightMesh) tube.highlightMesh.position.copy(intersection);
+              }
+              return tube;
+            });
+            // Update the ref immediately so the next mousemove sees it
+            tubesRef.current = newTubes;
+            return newTubes;
+          });
+        }
+        return; // Don't rotate camera if dragging object
+      }
+
+      // 2. HANDLE CAMERA ROTATION
+      if (controls.isDragging) {
         const deltaX = e.clientX - controls.previousMousePosition.x;
         const deltaY = e.clientY - controls.previousMousePosition.y;
         
@@ -262,6 +297,8 @@ export default function TubeJointVisualizer() {
     
     const onMouseUp = () => {
       controls.isDragging = false;
+      draggedTubeRef.current = null; // Stop dragging
+      setDraggedTube(null);
     };
     
     const onWheel = (e: WheelEvent) => {
@@ -272,11 +309,11 @@ export default function TubeJointVisualizer() {
     };
     
     renderer.domElement.addEventListener('mousedown', onMouseDown);
-    renderer.domElement.addEventListener('mousemove', onMouseMove);
-    renderer.domElement.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('mousemove', onMouseMove); // Window ensures drag continues if mouse leaves canvas
+    window.addEventListener('mouseup', onMouseUp);
     renderer.domElement.addEventListener('wheel', onWheel);
     
-    // Animation loop (With ID tracking)
+    // Animation Loop
     let animationFrameId: number;
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
@@ -286,7 +323,6 @@ export default function TubeJointVisualizer() {
     };
     animate();
     
-    // Handle window resize
     const handleResize = () => {
       if (!mountRef.current || !cameraRef.current || !rendererRef.current) return;
       cameraRef.current.aspect = mountRef.current.clientWidth / mountRef.current.clientHeight;
@@ -295,19 +331,15 @@ export default function TubeJointVisualizer() {
     };
     window.addEventListener('resize', handleResize);
     
-    // Cleanup
     return () => {
       window.removeEventListener('resize', handleResize);
-      // Stop the loop
       cancelAnimationFrame(animationFrameId);
       
       if (rendererRef.current) {
         rendererRef.current.domElement.removeEventListener('mousedown', onMouseDown);
-        rendererRef.current.domElement.removeEventListener('mousemove', onMouseMove);
-        rendererRef.current.domElement.removeEventListener('mouseup', onMouseUp);
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', onMouseUp);
         rendererRef.current.domElement.removeEventListener('wheel', onWheel);
-        
-        // Remove the canvas
         rendererRef.current.dispose();
         if (mountRef.current && mountRef.current.contains(rendererRef.current.domElement)) {
           mountRef.current.removeChild(rendererRef.current.domElement);
@@ -578,11 +610,30 @@ useEffect(() => {
             {tubes.map((tube, index) => (
               <div 
                 key={tube.id}
-                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200"
+                onClick={() => setSelectedTube(tube.id)}
+                // USE draggingTube HERE:
+                className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
+                  // If this tube is being dragged:
+                  draggedTube === tube.id 
+                    ? 'bg-blue-100 border-blue-400 cursor-grabbing shadow-inner' 
+                    : selectedTube === tube.id 
+                      ? 'bg-blue-50 border-blue-300 cursor-pointer' 
+                      : 'bg-gray-50 border-gray-200 hover:bg-gray-100 cursor-pointer'
+                }`}
               >
-                <span className="text-sm text-gray-700">Tube {index + 1}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-700">Tube {index + 1}</span>
+                  {/* Optional: Add a text label if dragging */}
+                  {draggedTube === tube.id && (
+                    <span className="text-xs text-blue-600 font-bold animate-pulse">(Dragging)</span>
+                  )}
+                </div>
+                
                 <button 
-                  onClick={() => removeTube(tube.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeTube(tube.id);
+                  }}
                   className="text-red-500 hover:text-red-700"
                 >
                   <Trash2 size={16} />
