@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { Plus, Trash2, Maximize2, Undo, Redo } from 'lucide-react';
+import { Plus, Trash2, Maximize2, Undo, Redo, Save } from 'lucide-react';
 
 // Tube class to manage individual tubes
 class Tube {
@@ -427,6 +427,28 @@ const redo = () => {
   }
 };
 
+const exportData = () => {
+  const data = tubes.map(tube => ({
+    type: tubeType, // Optional: might be useful to save the type (square/rect)
+    width: tube.width,
+    height: tube.height,
+    thickness: tube.thickness,
+    length: tube.length,
+    position: { x: tube.position.x, y: tube.position.y, z: tube.position.z },
+    rotation: { x: tube.rotation.x, y: tube.rotation.y, z: tube.rotation.z }
+  }));
+  
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `tube-assembly-${Date.now()}.json`;
+  document.body.appendChild(a); // Safer for some browsers
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
+
 const restoreState = (state: Tube[]) => {
   if (!sceneRef.current) return;
   
@@ -735,7 +757,17 @@ const restoreState = (state: Tube[]) => {
             Clear All
           </button>
         </div>
-        
+        <div className="my-2"> 
+          <button 
+            onClick={exportData}
+            disabled={tubes.length === 0}
+            className="w-full bg-green-500 hover:bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white py-2 rounded-lg flex items-center justify-center gap-2 transition-colors"
+          >
+            <Save size={18} />
+            Export Assembly
+          </button>
+        </div>
+
         {/* Tube List */}
         <div>
           <h3 className="text-sm font-semibold mb-3 text-gray-700">Tubes ({tubes.length})</h3>
