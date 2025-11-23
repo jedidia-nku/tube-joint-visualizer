@@ -394,6 +394,13 @@ useEffect(() => {
   });
 }, [selectedTube, tubes]);
   
+ useEffect(() => {
+    if (history.length === 0) {
+      setHistory([[]]); // History starts with one empty state
+      setHistoryIndex(0);
+    }
+  }, []);
+
 const snapAngleFunc = (angleValue: number): number => {
     if (!snapToAngle) return angleValue;
     const snapAngles = [0, 30, 45, 60, 90, 120, 135, 150, 180];
@@ -567,8 +574,9 @@ const restoreState = (state: Tube[]) => {
     });
     setTubes([]);
     setSelectedTube(null);
-    setHistory([]);
-    setHistoryIndex(-1);
+    
+    setHistory([[]]); 
+    setHistoryIndex(0);
   };
   
   const resetCamera = () => {
