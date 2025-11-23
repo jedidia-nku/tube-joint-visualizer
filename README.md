@@ -2,7 +2,7 @@
 
 An interactive desktop application for visualizing, manipulating, and joining rectangular 3D tubes. Built with **React**, **Three.js**, and packaged with **Electron**.
 
-## 🚀 Features
+## Features
 
 *   **3D Workspace:** Interactive canvas with zoom, pan, and rotate controls (OrbitControls).
 *   **Tube Customization:** Create Rectangular or Square tubes with custom Width, Height, Thickness, and Length.
@@ -18,7 +18,7 @@ An interactive desktop application for visualizing, manipulating, and joining re
 *   **History System:** Full **Undo/Redo** support for all actions.
 *   **Export:** Save the assembly data to a JSON file.
 
-## 📂 Project Structure
+## Project Structure
 
 ```text
 tube-joint-visualizer/
@@ -34,7 +34,7 @@ tube-joint-visualizer/
 │   └── win-unpacked/   # Unpacked executable folder
 ├── package.json        # Dependencies and scripts
 └── vite.config.ts      # Vite configuration
-
+```
 ## Setup & Installation
 
 1.  **Prerequisites:** Ensure [Node.js](https://nodejs.org/) (v18 or higher) is installed.
