@@ -56,7 +56,7 @@ To run the application locally with hot-reloading:
 ```bash
 npm run electron:dev
 
----
+```
 
 ### Controls
 *   **Left Click:** Select a tube (Yellow highlight).
