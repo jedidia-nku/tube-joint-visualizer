@@ -12,7 +12,9 @@ class Tube {
   rotation: THREE.Euler;
   mesh: THREE.Mesh | null;
   wireframe: THREE.LineSegments | null;
+  highlightMesh: THREE.Mesh | null;
   id: string;
+  isSelected: boolean;
 
   constructor(
     width: number,
@@ -30,7 +32,9 @@ class Tube {
     this.rotation = rotation;
     this.mesh = null;
     this.wireframe = null;
+    this.highlightMesh = null;
     this.id = Math.random().toString(36).substr(2, 9);
+    this.isSelected = false;
   }
 
   createGeometry(): THREE.ExtrudeGeometry {
@@ -70,7 +74,8 @@ class Tube {
     const material = new THREE.MeshStandardMaterial({ 
       color: 0x4488ff,
       metalness: 0.5,
-      roughness: 0.5
+      roughness: 0.5,
+      side: THREE.DoubleSide
     });
     
     this.mesh = new THREE.Mesh(geometry, material);
@@ -89,8 +94,31 @@ class Tube {
     this.wireframe.rotation.copy(this.rotation);
     this.wireframe.geometry.translate(0, 0, -this.length / 2);
     
+    // Create highlight mesh
+    const highlightMaterial = new THREE.MeshBasicMaterial({ 
+      color: 0xffff00, 
+      transparent: true, 
+      opacity: 0.3,
+      depthTest: false,
+      depthWrite: false
+    });
+    this.highlightMesh = new THREE.Mesh(geometry.clone(), highlightMaterial);
+    this.highlightMesh.position.copy(this.position);
+    this.highlightMesh.rotation.copy(this.rotation);
+    this.highlightMesh.geometry.translate(0, 0, -this.length / 2);
+    this.highlightMesh.visible = false;
+    this.highlightMesh.renderOrder = 1;
+
     return this.mesh;
   }
+
+  setSelected(selected: boolean): void {
+    this.isSelected = selected;
+    if (this.highlightMesh) {
+      this.highlightMesh.visible = selected;
+    }
+  }
+
 }
 
 interface CameraControls {
@@ -106,7 +134,13 @@ export default function TubeJointVisualizer() {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const controlsRef = useRef<CameraControls | null>(null);
+
+
   
+  const raycasterRef = useRef(new THREE.Raycaster());
+  const mouseRef = useRef(new THREE.Vector2());
+  const tubesRef = useRef<Tube[]>([]);
+
   const [tubes, setTubes] = useState<Tube[]>([]);
   const [selectedTube, setSelectedTube] = useState<string | null>(null);
   const [showWireframe, setShowWireframe] = useState(true);
@@ -119,11 +153,9 @@ export default function TubeJointVisualizer() {
   const [thickness, setThickness] = useState(3);
   const [length, setLength] = useState(100);
   const [angle, setAngle] = useState(90);
-  
+
   useEffect(() => {
     if (!mountRef.current) return;
-    
-    // CLEANUP START: Remove any existing canvas before creating a new one
     while (mountRef.current.firstChild) {
       mountRef.current.removeChild(mountRef.current.firstChild);
     }
@@ -176,13 +208,38 @@ export default function TubeJointVisualizer() {
       zoomSpeed: 0.1
     };
     controlsRef.current = controls;
-    
+
     const onMouseDown = (e: MouseEvent) => {
-      if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
-        controls.isDragging = true;
-        controls.previousMousePosition = { x: e.clientX, y: e.clientY };
-      }
-    };
+      if (!cameraRef.current || !rendererRef.current) return;
+  
+  // Calculate mouse position in normalized device coordinates
+  const rect = rendererRef.current.domElement.getBoundingClientRect();
+  mouseRef.current.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  mouseRef.current.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  
+  // Check for tube selection on left click
+  if (e.button === 0 && !e.shiftKey) {
+    raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+    const meshes = tubesRef.current
+    .map(t => t.mesh)
+    .filter((m): m is THREE.Mesh => m !== null);
+
+    const intersects = raycasterRef.current.intersectObjects(meshes);
+    
+    if (intersects.length > 0) {
+      const tubeId = intersects[0].object.userData.tubeId as string;
+      setSelectedTube(tubeId);
+    } else {
+      setSelectedTube(null);
+    }
+  }
+  
+  // Camera rotation
+  if (e.button === 1 || (e.button === 0 && e.shiftKey)) {
+    controls.isDragging = true;
+    controls.previousMousePosition = { x: e.clientX, y: e.clientY };
+  }
+};
     
     const onMouseMove = (e: MouseEvent) => {
       if (controls.isDragging && cameraRef.current) {
@@ -259,19 +316,30 @@ export default function TubeJointVisualizer() {
     };
   }, []);
   
+  useEffect(() => {
+      tubesRef.current = tubes;
+    }, [tubes]);
+
   // Update tube visibility based on wireframe/solid toggles
   useEffect(() => {
     if (!sceneRef.current) return;
     
     tubes.forEach(tube => {
       if (tube.mesh) {
-        tube.mesh.visible = showSolid;
+        (tube.mesh.material as THREE.Material).visible = showSolid;
+        tube.mesh.visible = true;
       }
       if (tube.wireframe) {
         tube.wireframe.visible = showWireframe;
       }
     });
   }, [showWireframe, showSolid, tubes]);
+
+useEffect(() => {
+  tubes.forEach(tube => {
+    tube.setSelected(tube.id === selectedTube);
+  });
+}, [selectedTube, tubes]);
   
   const addTube = () => {
     if (!sceneRef.current) return;
@@ -288,25 +356,27 @@ export default function TubeJointVisualizer() {
     const mesh = newTube.createMesh();
     
     if (tubes.length > 0) {
-      // Position new tube at an angle relative to the last tube
       const lastTube = tubes[tubes.length - 1];
       const angleRad = (angle * Math.PI) / 180;
       
-      // Position at the end of the last tube
-      const offset = new THREE.Vector3(0, 0, lastTube.length / 2);
-      offset.applyEuler(lastTube.rotation);
-      
-      newTube.position.copy(lastTube.position).add(offset);
-      
-      // Rotate based on selected angle
+      const jointPosition = new THREE.Vector3(0, 0, lastTube.length / 2);
+      jointPosition.applyEuler(lastTube.rotation);
+      jointPosition.add(lastTube.position);
+
       newTube.rotation.set(
         lastTube.rotation.x,
         lastTube.rotation.y + angleRad,
         lastTube.rotation.z
       );
+
+      const offsetFromJoint = new THREE.Vector3(0, 0, newTube.length / 2);
+      offsetFromJoint.applyEuler(newTube.rotation);
+      
+      newTube.position.copy(jointPosition).add(offsetFromJoint);
       
       mesh.position.copy(newTube.position);
       mesh.rotation.copy(newTube.rotation);
+      
       if (newTube.wireframe) {
         newTube.wireframe.position.copy(newTube.position);
         newTube.wireframe.rotation.copy(newTube.rotation);
@@ -317,7 +387,10 @@ export default function TubeJointVisualizer() {
     if (newTube.wireframe) {
       sceneRef.current.add(newTube.wireframe);
     }
-    
+    if (newTube.highlightMesh) {
+      sceneRef.current.add(newTube.highlightMesh);
+    }
+
     setTubes([...tubes, newTube]);
   };
   
@@ -328,6 +401,7 @@ export default function TubeJointVisualizer() {
     if (tube) {
       if (tube.mesh) sceneRef.current.remove(tube.mesh);
       if (tube.wireframe) sceneRef.current.remove(tube.wireframe);
+      if (tube.highlightMesh) sceneRef.current.remove(tube.highlightMesh);
       setTubes(tubes.filter(t => t.id !== tubeId));
       if (selectedTube === tubeId) setSelectedTube(null);
     }
@@ -339,6 +413,7 @@ export default function TubeJointVisualizer() {
     tubes.forEach(tube => {
       if (tube.mesh) sceneRef.current!.remove(tube.mesh);
       if (tube.wireframe) sceneRef.current!.remove(tube.wireframe);
+      if (tube.highlightMesh) sceneRef.current!.remove(tube.highlightMesh);
     });
     setTubes([]);
     setSelectedTube(null);
