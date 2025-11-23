@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { Plus, Trash2, Maximize2 } from 'lucide-react';
+import { Plus, Trash2, Maximize2, Undo, Redo } from 'lucide-react';
 
 // Tube class to manage individual tubes
 class Tube {
@@ -119,6 +119,20 @@ class Tube {
     }
   }
 
+  clone(): Tube {
+  const clonedTube = new Tube(
+    this.width,
+    this.height,
+    this.thickness,
+    this.length,
+    this.position.clone(),
+    this.rotation.clone()
+  );
+  clonedTube.id = this.id;
+  clonedTube.isSelected = this.isSelected;
+  return clonedTube;
+}
+
 }
 
 interface CameraControls {
@@ -153,6 +167,10 @@ export default function TubeJointVisualizer() {
   const [thickness, setThickness] = useState(3);
   const [length, setLength] = useState(100);
   const [angle, setAngle] = useState(90);
+  const [snapToAngle, setSnapToAngle] = useState(true);
+
+  const [history, setHistory] = useState<Tube[][]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
 
   // Main Scene Setup
   useEffect(() => {
@@ -297,7 +315,10 @@ export default function TubeJointVisualizer() {
     
     const onMouseUp = () => {
       controls.isDragging = false;
-      draggedTubeRef.current = null; // Stop dragging
+      if (draggedTubeRef.current) {
+        addToHistory(tubesRef.current); 
+      }
+      draggedTubeRef.current = null;
       setDraggedTube(null);
     };
     
@@ -373,9 +394,78 @@ useEffect(() => {
   });
 }, [selectedTube, tubes]);
   
+const snapAngleFunc = (angleValue: number): number => {
+    if (!snapToAngle) return angleValue;
+    const snapAngles = [0, 30, 45, 60, 90, 120, 135, 150, 180];
+    return snapAngles.reduce((prev, curr) => 
+      Math.abs(curr - angleValue) < Math.abs(prev - angleValue) ? curr : prev
+    );
+  };
+
+
+const addToHistory = (tubesToSave: Tube[] = tubes) => {
+  const snapshot = tubesToSave.map(t => t.clone());
+  const newHistory = history.slice(0, historyIndex + 1);
+  newHistory.push(snapshot);
+  setHistory(newHistory);
+  setHistoryIndex(newHistory.length - 1);
+};
+
+const undo = () => {
+  if (historyIndex > 0) {
+    const previousState = history[historyIndex - 1];
+    restoreState(previousState);
+    setHistoryIndex(historyIndex - 1);
+  }
+};
+
+const redo = () => {
+  if (historyIndex < history.length - 1) {
+    const nextState = history[historyIndex + 1];
+    restoreState(nextState);
+    setHistoryIndex(historyIndex + 1);
+  }
+};
+
+const restoreState = (state: Tube[]) => {
+  if (!sceneRef.current) return;
+  
+  // Remove current tubes from scene
+  tubes.forEach(tube => {
+    if (tube.mesh) sceneRef.current!.remove(tube.mesh);
+    if (tube.wireframe) sceneRef.current!.remove(tube.wireframe);
+    if (tube.highlightMesh) sceneRef.current!.remove(tube.highlightMesh);
+  });
+  
+  // Restore tubes from history
+  const restoredTubes = state.map(tubeData => {
+    const tube = new Tube(
+      tubeData.width,
+      tubeData.height,
+      tubeData.thickness,
+      tubeData.length,
+      tubeData.position,
+      tubeData.rotation
+    );
+    tube.id = tubeData.id;
+    tube.createMesh();
+    
+    if (sceneRef.current) {
+      sceneRef.current.add(tube.mesh!);
+      sceneRef.current.add(tube.wireframe!);
+      sceneRef.current.add(tube.highlightMesh!);
+    }
+    return tube;
+  });
+  
+  setTubes(restoredTubes);
+};
+
   const addTube = () => {
     if (!sceneRef.current) return;
-    
+
+    const finalAngle = snapToAngle ? snapAngleFunc(angle) : angle;
+
     const newTube = new Tube(
       tubeType === 'square' ? width : width,
       tubeType === 'square' ? width : height,
@@ -389,7 +479,7 @@ useEffect(() => {
     
     if (tubes.length > 0) {
       const lastTube = tubes[tubes.length - 1];
-      const angleRad = (angle * Math.PI) / 180;
+      const angleRad = (finalAngle * Math.PI) / 180;
       
       const jointPosition = new THREE.Vector3(0, 0, lastTube.length / 2);
       jointPosition.applyEuler(lastTube.rotation);
@@ -423,19 +513,25 @@ useEffect(() => {
       sceneRef.current.add(newTube.highlightMesh);
     }
 
-    setTubes([...tubes, newTube]);
+    const newTubesList = [...tubes, newTube];
+    setTubes(newTubesList);
+    addToHistory(newTubesList);
   };
   
   const removeTube = (tubeId: string) => {
     if (!sceneRef.current) return;
-    
+
+    const filteredTubes = tubes.filter(t => t.id !== tubeId);
+
     const tube = tubes.find(t => t.id === tubeId);
     if (tube) {
       if (tube.mesh) sceneRef.current.remove(tube.mesh);
       if (tube.wireframe) sceneRef.current.remove(tube.wireframe);
       if (tube.highlightMesh) sceneRef.current.remove(tube.highlightMesh);
-      setTubes(tubes.filter(t => t.id !== tubeId));
+
+      setTubes(filteredTubes);
       if (selectedTube === tubeId) setSelectedTube(null);
+      addToHistory(filteredTubes);
     }
   };
   
@@ -449,6 +545,15 @@ useEffect(() => {
     });
     setTubes([]);
     setSelectedTube(null);
+
+    useEffect(() => {
+  if (history.length === 0) {
+    setHistory([[]]);
+    setHistoryIndex(0);
+      }
+    }, []);
+
+    setHistoryIndex(-1);
   };
   
   const resetCamera = () => {
@@ -528,7 +633,18 @@ useEffect(() => {
         
         {/* Joint Angle */}
         <div className="mb-6">
-          <label className="block text-sm font-semibold mb-2 text-gray-700">Joint Angle (degrees)</label>
+         <div className="flex justify-between items-center mb-2">
+            <label className="block text-sm font-semibold text-gray-700">Joint Angle (degrees)</label>
+            <label className="flex items-center text-xs">
+              <input 
+                type="checkbox" 
+                checked={snapToAngle} 
+                onChange={(e) => setSnapToAngle(e.target.checked)}
+                className="mr-1"
+              />
+              Snap
+            </label>
+          </div>
           <div className="flex gap-2 mb-2">
             {[45, 90, 135, 180].map(a => (
               <button
@@ -584,8 +700,25 @@ useEffect(() => {
           >
             <Plus size={20} />
             Add Tube
-          </button>
-          
+          </button> 
+            <div className="flex gap-2">  {/* ADD this div */}
+              <button 
+                onClick={undo}
+                disabled={historyIndex <= 0}
+                className="flex-1 bg-gray-500 hover:bg-gray-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white py-2 rounded-lg flex items-center justify-center gap-2 transition-colors"
+              >
+                <Undo size={18} />
+                Undo
+              </button>
+              <button 
+                onClick={redo}
+                disabled={historyIndex >= history.length - 1}
+                className="flex-1 bg-gray-500 hover:bg-gray-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white py-2 rounded-lg flex items-center justify-center gap-2 transition-colors"
+              >
+                <Redo size={18} />
+                Redo
+              </button>
+            </div>
           <button 
             onClick={resetCamera}
             className="w-full bg-gray-500 hover:bg-gray-600 text-white py-3 rounded-lg flex items-center justify-center gap-2 transition-colors"
