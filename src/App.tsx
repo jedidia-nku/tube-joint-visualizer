@@ -567,14 +567,7 @@ const restoreState = (state: Tube[]) => {
     });
     setTubes([]);
     setSelectedTube(null);
-
-    useEffect(() => {
-  if (history.length === 0) {
-    setHistory([[]]);
-    setHistoryIndex(0);
-      }
-    }, []);
-
+    setHistory([]);
     setHistoryIndex(-1);
   };
   
@@ -668,7 +661,7 @@ const restoreState = (state: Tube[]) => {
             </label>
           </div>
           <div className="flex gap-2 mb-2">
-            {[45, 90, 135, 180].map(a => (
+            {[30, 45, 90, 135, 180].map(a => (
               <button
                 key={a}
                 onClick={() => setAngle(a)}
